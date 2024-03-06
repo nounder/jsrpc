@@ -15,6 +15,10 @@ function JSRPC({
 
 	rpcReadyFuture.promise = readyPromise
 
+	if (!listener || !sender) {
+		throw new Error("JSRPC listener and sender are required")
+	}
+
 	listener(handleMessage)
 
 	if (readyNotification) {
