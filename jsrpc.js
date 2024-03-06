@@ -1,39 +1,106 @@
-class JSRPC {
-	constructor() {
-		this._rpcId = 0
-		this._rpcFutures = {}
+function JSRPC({
+	listener,
+	sender,
+	methods = [],
+	readyNotification = "__JSRPC_READY__",
+}) {
+	let rpcId = 0
+	let rpcFutures = {}
+	let rpcReadyFuture = {}
 
-		const readyPromise = new Promise((resolve, reject) => {
-			this._readyFuture = {
-				/** @type {Promise<void>} */
-				promise: null,
-				resolve,
-				reject,
-			}
-		})
-		this._readyFuture.promise = readyPromise
+	const readyPromise = new Promise((resolve, reject) => {
+		rpcReadyFuture.resolve = resolve
+		rpcReadyFuture.reject = reject
+	})
 
-		this._rpcListen()
+	rpcReadyFuture.promise = readyPromise
 
-		this._rpcSend({
+	listener(handleMessage)
+
+	if (readyNotification) {
+		sender({
 			jsonrpc: "2.0",
-			method: "_rpc_ready",
+			method: readyNotification,
 		})
 	}
 
-	_rpcListen() {
-		throw new Error("Not implemented")
+	function handleResponseMessage({ id, error, result }) {
+		if (id !== undefined) {
+			const cb = rpcFutures[id]
+
+			if (cb) {
+				if (error) {
+					cb.reject(error)
+				} else {
+					cb.resolve(result)
+				}
+
+				delete rpcFutures[id]
+			}
+		}
 	}
 
-	_rpcSend() {
-		throw new Error("Not implemented")
+	function handleRequestMessage({ id, method, params }) {
+		if (id === undefined && method === readyNotification) {
+			rpcReadyFuture.resolve()
+
+			return
+		}
+
+		const callable = methods[method]
+
+		if (callable) {
+			;(async () => {
+				try {
+					const result = await callable(params)
+
+					if (id !== undefined) {
+						sender({
+							jsonrpc: "2.0",
+							id,
+							result: result === undefined ? null : result,
+						})
+					}
+				} catch (error) {
+					if (id !== undefined) {
+						sender({
+							jsonrpc: "2.0",
+							id,
+							error: {
+								code: -32000,
+								message: error.message,
+							},
+						})
+					}
+				}
+			})()
+		} else {
+			sender({
+				jsonrpc: "2.0",
+				id,
+				error: {
+					code: -32601,
+					message: "Method not found",
+					data: {
+						method,
+					},
+				},
+			})
+		}
 	}
 
-	/** @return {Promise<any>} */
-	async call(method, params = {}) {
-		await this._readyFuture.promise
+	function handleMessage({ id, method, params = {}, result, error }) {
+		if (result !== undefined || error !== undefined) {
+			handleResponseMessage({ id, error, result })
+		} else if (method) {
+			handleRequestMessage({ id, method, params })
+		}
+	}
 
-		const id = this._rpcId++
+	async function rpc(method, params = {}) {
+		await rpcReadyFuture.promise
+
+		const id = rpcId++
 		const rpcReqest = {
 			jsonrpc: "2.0",
 			id,
@@ -42,87 +109,18 @@ class JSRPC {
 		}
 
 		const promise = new Promise((resolve, reject) => {
-			this._rpcFutures[id] = { promise: null, resolve, reject }
+			rpcFutures[id] = { promise: null, resolve, reject }
 		})
-		this._rpcFutures[id].promise = promise
+		rpcFutures[id].promise = promise
 
-		this._rpcSend(rpcReqest)
+		sender(rpcReqest)
 
 		return await promise
 	}
 
-	_rpcHandle({ id, method, params = {}, result, error }) {
-		/**
-		 * Handle a response
-		 * Ignore responses without id
-		 */
-		if (result !== undefined || error !== undefined) {
-			if (id !== undefined) {
-				const cb = this._rpcFutures[id]
+	rpc.ready = rpcReadyFuture.promise
 
-				if (cb) {
-					if (error) {
-						cb.reject(error)
-					} else {
-						cb.resolve(result)
-					}
-
-					delete this._rpcFutures[id]
-				}
-			}
-
-			return
-		}
-
-		/*
-		 * Hande a request or a notification
-		 */
-		if (method) {
-			if (id === undefined && method === "_rpc_ready") {
-				this._readyFuture.resolve()
-
-				return
-			}
-
-			const callable = this[method]
-
-			if (callable) {
-				;(async () => {
-					try {
-						const result = await callable(params)
-
-						if (id !== undefined) {
-							this._rpcSend({
-								jsonrpc: "2.0",
-								id,
-								result: result === undefined ? null : result,
-							})
-						}
-					} catch (error) {
-						if (id !== undefined) {
-							this._rpcSend({
-								jsonrpc: "2.0",
-								id,
-								error: {
-									code: -32000,
-									message: error.message,
-								},
-							})
-						}
-					}
-				})()
-			} else {
-				this._rpcSend({
-					jsonrpc: "2.0",
-					id,
-					error: {
-						code: -32601,
-						message: "Method not found",
-					},
-				})
-			}
-
-			return
-		}
-	}
+	return rpc
 }
+
+export default JSRPC
