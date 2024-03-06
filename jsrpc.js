@@ -1,9 +1,9 @@
 function JSRPC({
-	listener,
-	sender,
+	listener = JSRPC.listener,
+	sender = JSRPC.sender,
 	methods = [],
 	readyNotification = "__JSRPC_READY__",
-}) {
+} = {}) {
 	let rpcId = 0
 	let rpcFutures = {}
 	let rpcReadyFuture = {}
